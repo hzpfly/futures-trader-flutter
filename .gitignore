@@ -40,6 +40,9 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Build outputs
+/build/
+
 # Release APK outputs (large binaries)
 *.apk
 *.aab
