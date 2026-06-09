@@ -40,6 +40,12 @@ class TradesDao extends DatabaseAccessor<AppDatabase> with _$TradesDaoMixin {
         .watchSingleOrNull();
   }
 
+  /// 一次性获取单条交易（编辑模式用）
+  Future<TradeRecord?> getTradeById(int id) {
+    return (select(tradeRecords)..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+  }
+
   /// 一次性获取所有交易（用于统计）
   Future<List<TradeRecord>> getAllTrades() {
     return (select(tradeRecords)

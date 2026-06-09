@@ -1,4 +1,4 @@
-// 新建交易页面 - 步骤式录入（三重滤网核心）
+// 新建/编辑交易页面 - 步骤式录入（三重滤网核心）
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -43,14 +43,70 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
   };
 
   bool _isSaving = false;
+  bool _isLoading = false;
+  TradeRecord? _editTrade; // 编辑模式下的原始数据
+
+  bool get _isEditMode => widget.editTradeId != null;
 
   @override
   void initState() {
     super.initState();
-    // 自动填充合约月份（当月）
     final now = DateTime.now();
     _contract =
         '${now.year.toString().substring(2)}${now.month.toString().padLeft(2, '0')}';
+
+    if (_isEditMode) {
+      _isLoading = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadTradeData());
+    }
+  }
+
+  Future<void> _loadTradeData() async {
+    try {
+      final tradesDao = ref.read(tradesDaoProvider);
+      final snapshotsDao = ref.read(snapshotsDaoProvider);
+      final trade = await tradesDao.getTradeById(widget.editTradeId!);
+
+      if (trade == null || !mounted) return;
+
+      final snapshots = await snapshotsDao.getSnapshotsByTrade(trade.id);
+
+      setState(() {
+        _editTrade = trade;
+        _selectedSymbol = trade.symbol;
+        _contract = trade.contract;
+        _direction = trade.direction == 'long'
+            ? TradeDirection.long
+            : TradeDirection.short;
+        _openPriceCtrl.text = trade.openPrice.toStringAsFixed(2);
+        _lotsCtrl.text = trade.lots.toString();
+        if (trade.stopLoss != null) {
+          _stopLossCtrl.text = trade.stopLoss!.toStringAsFixed(2);
+        }
+        if (trade.takeProfit != null) {
+          _takeProfitCtrl.text = trade.takeProfit!.toStringAsFixed(2);
+        }
+        _signalScore = trade.signalScore;
+        _notesCtrl.text = trade.notes;
+        _entryReasonCtrl.text = trade.entryReason;
+
+        // 加载已有截图
+        for (final snap in snapshots) {
+          _imagePaths[snap.filterLevel] = snap.imagePath;
+          _annotationCtrls[snap.filterLevel]!.text = snap.annotation;
+        }
+
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('加载交易数据失败：$e'),
+              backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   @override
@@ -108,15 +164,15 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
       final snapshotsDao = ref.read(snapshotsDaoProvider);
       final symbolInfo = kFuturesSymbols[_selectedSymbol];
 
-      // 插入交易主记录
-      final tradeId = await tradesDao.insertTrade(
-        TradeRecordsCompanion.insert(
+      final int tradeId;
+      if (_isEditMode && _editTrade != null) {
+        // ── 编辑模式：更新已有记录 ──
+        final updated = _editTrade!.copyWith(
           symbol: _selectedSymbol,
           contract: _contract,
-          exchange: symbolInfo?.exchange ?? '',
+          exchange: symbolInfo?.exchange ?? _editTrade!.exchange,
           direction: _direction == TradeDirection.long ? 'long' : 'short',
           openPrice: openPrice,
-          openTime: DateTime.now(),
           lots: lots,
           stopLoss: _stopLossCtrl.text.isNotEmpty
               ? drift.Value(double.tryParse(_stopLossCtrl.text))
@@ -127,39 +183,92 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
           signalScore: drift.Value(_signalScore),
           notes: drift.Value(_notesCtrl.text),
           entryReason: drift.Value(_entryReasonCtrl.text),
-        ),
-      );
+          updatedAt: drift.Value(DateTime.now()),
+        );
+        await tradesDao.updateTrade(updated);
+        tradeId = _editTrade!.id;
+      } else {
+        // ── 新建模式 ──
+        tradeId = await tradesDao.insertTrade(
+          TradeRecordsCompanion.insert(
+            symbol: _selectedSymbol,
+            contract: _contract,
+            exchange: symbolInfo?.exchange ?? '',
+            direction: _direction == TradeDirection.long ? 'long' : 'short',
+            openPrice: openPrice,
+            openTime: DateTime.now(),
+            lots: lots,
+            stopLoss: _stopLossCtrl.text.isNotEmpty
+                ? drift.Value(double.tryParse(_stopLossCtrl.text))
+                : const drift.Value.absent(),
+            takeProfit: _takeProfitCtrl.text.isNotEmpty
+                ? drift.Value(double.tryParse(_takeProfitCtrl.text))
+                : const drift.Value.absent(),
+            signalScore: drift.Value(_signalScore),
+            notes: drift.Value(_notesCtrl.text),
+            entryReason: drift.Value(_entryReasonCtrl.text),
+          ),
+        );
+      }
 
-      // 保存截图
+      // ── 保存截图 ──
+      // 编辑模式：只处理用户新选的图片（_imagePaths 中非 null 的临时路径）
+      // 新建模式：处理所有图片
       for (int level = 1; level <= 3; level++) {
         final imagePath = _imagePaths[level];
-        if (imagePath != null) {
-          final savedPath = await ImageManager.saveForTrade(
+        if (imagePath == null) continue;
+
+        // 判断是否需要持久化保存（临时文件 vs 已持久化的路径）
+        final isNewImage = imagePath.contains('image_picker') ||
+            imagePath.contains('/cache/') ||
+            imagePath.startsWith('/data/');
+        final String savedPath;
+        if (isNewImage) {
+          savedPath = await ImageManager.saveForTrade(
             sourcePath: imagePath,
             tradeId: tradeId,
             filterLevel: level,
           );
-          await snapshotsDao.insertSnapshot(
-            ChartSnapshotsCompanion.insert(
-              tradeId: tradeId,
-              filterLevel: level,
-              timeframe:
-                  drift.Value(kFilterTimeframes[level - 1].example),
-              imagePath: savedPath,
-              annotation:
-                  drift.Value(_annotationCtrls[level]!.text),
-              fileSize: drift.Value(
-                  await ImageManager.getFileSize(savedPath)),
-            ),
-          );
+        } else {
+          savedPath = imagePath;
         }
+
+        // 删除同级别旧截图，插入新的
+        final oldSnap =
+            await snapshotsDao.getSnapshotByLevel(tradeId, level);
+        if (oldSnap != null) {
+          // 删除旧截图文件
+          try {
+            final oldFile = File(oldSnap.imagePath);
+            if (await oldFile.exists()) await oldFile.delete();
+          } catch (_) {}
+          await snapshotsDao.deleteSnapshot(oldSnap.id);
+        }
+
+        await snapshotsDao.insertSnapshot(
+          ChartSnapshotsCompanion.insert(
+            tradeId: tradeId,
+            filterLevel: level,
+            timeframe:
+                drift.Value(kFilterTimeframes[level - 1].example),
+            imagePath: savedPath,
+            annotation:
+                drift.Value(_annotationCtrls[level]!.text),
+            fileSize: drift.Value(
+                await ImageManager.getFileSize(savedPath)),
+          ),
+        );
+
+        // 更新 _imagePaths 指向持久化路径
+        _imagePaths[level] = savedPath;
       }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('交易记录已保存'),
-              backgroundColor: Colors.green),
+          SnackBar(
+            content: Text(_isEditMode ? '交易记录已更新' : '交易记录已保存'),
+            backgroundColor: Colors.green,
+          ),
         );
         context.pop();
       }
@@ -176,11 +285,21 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final isClosed = _editTrade?.status == 'closed';
+
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
-        title: const Text('新建交易记录',
-            style: TextStyle(fontWeight: FontWeight.w600)),
+        title: Text(
+          _isEditMode ? '编辑交易记录' : '新建交易记录',
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
         backgroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
@@ -190,6 +309,25 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
       ),
       body: Column(
         children: [
+          // 已平仓提示
+          if (isClosed)
+            Container(
+              width: double.infinity,
+              color: Colors.orange[50],
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline,
+                      size: 16, color: Colors.orange[700]),
+                  const SizedBox(width: 8),
+                  const Text(
+                    '此交易已平仓，修改价格/手数将影响盈亏统计',
+                    style: TextStyle(fontSize: 12, color: Colors.deepOrange),
+                  ),
+                ],
+              ),
+            ),
           // 步骤指示器
           _StepIndicator(currentStep: _currentStep),
           // 内容
@@ -209,6 +347,7 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
                   takeProfitCtrl: _takeProfitCtrl,
                   notesCtrl: _notesCtrl,
                   entryReasonCtrl: _entryReasonCtrl,
+                  readonly: isClosed,
                   onSymbolChanged: (v) =>
                       setState(() => _selectedSymbol = v),
                   onContractChanged: (v) =>
@@ -232,6 +371,7 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
           _BottomNavButtons(
             currentStep: _currentStep,
             isSaving: _isSaving,
+            isEditMode: _isEditMode,
             onNext: _nextStep,
             onPrev: _prevStep,
             onSave: _saveTrade,
@@ -327,6 +467,7 @@ class _Step1BasicInfo extends StatelessWidget {
   final TextEditingController takeProfitCtrl;
   final TextEditingController notesCtrl;
   final TextEditingController entryReasonCtrl;
+  final bool readonly;
   final ValueChanged<String> onSymbolChanged;
   final ValueChanged<String> onContractChanged;
   final ValueChanged<TradeDirection> onDirectionChanged;
@@ -343,6 +484,7 @@ class _Step1BasicInfo extends StatelessWidget {
     required this.takeProfitCtrl,
     required this.notesCtrl,
     required this.entryReasonCtrl,
+    this.readonly = false,
     required this.onSymbolChanged,
     required this.onContractChanged,
     required this.onDirectionChanged,
@@ -374,12 +516,13 @@ class _Step1BasicInfo extends StatelessWidget {
                                 '${e.key}  ${e.value.name} (${e.value.exchange})'),
                           ))
                       .toList(),
-                  onChanged: (v) => onSymbolChanged(v!),
+                  onChanged: readonly ? null : (v) => onSymbolChanged(v!),
                 ),
                 const SizedBox(height: 12),
                 // 合约月份
                 TextFormField(
                   initialValue: contract,
+                  enabled: !readonly,
                   decoration: const InputDecoration(
                     labelText: '合约月份',
                     hintText: '如 2609',
@@ -407,6 +550,7 @@ class _Step1BasicInfo extends StatelessWidget {
                           child: _DirectionButton(
                             direction: d,
                             isSelected: direction == d,
+                            enabled: !readonly,
                             onTap: () => onDirectionChanged(d),
                           ),
                         ),
@@ -425,6 +569,7 @@ class _Step1BasicInfo extends StatelessWidget {
                     Expanded(
                       child: TextFormField(
                         controller: openPriceCtrl,
+                        enabled: !readonly,
                         decoration: const InputDecoration(
                           labelText: '开仓价格 *',
                           hintText: '0.00',
@@ -437,6 +582,7 @@ class _Step1BasicInfo extends StatelessWidget {
                     Expanded(
                       child: TextFormField(
                         controller: lotsCtrl,
+                        enabled: !readonly,
                         decoration: const InputDecoration(
                           labelText: '手数 *',
                           hintText: '1',
@@ -538,18 +684,20 @@ class _Step1BasicInfo extends StatelessWidget {
 class _DirectionButton extends StatelessWidget {
   final TradeDirection direction;
   final bool isSelected;
+  final bool enabled;
   final VoidCallback onTap;
 
   const _DirectionButton({
     required this.direction,
     required this.isSelected,
+    this.enabled = true,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: enabled ? onTap : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         height: 48,
@@ -563,27 +711,30 @@ class _DirectionButton extends StatelessWidget {
             width: isSelected ? 2 : 1,
           ),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              direction == TradeDirection.long
-                  ? Icons.north_east
-                  : Icons.south_east,
-              color: isSelected ? direction.color : Colors.grey,
-              size: 18,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              direction.fullLabel,
-              style: TextStyle(
-                fontWeight:
-                    isSelected ? FontWeight.bold : FontWeight.normal,
+        child: Opacity(
+          opacity: enabled ? 1.0 : 0.5,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                direction == TradeDirection.long
+                    ? Icons.north_east
+                    : Icons.south_east,
                 color: isSelected ? direction.color : Colors.grey,
-                fontSize: 15,
+                size: 18,
               ),
-            ),
-          ],
+              const SizedBox(width: 6),
+              Text(
+                direction.fullLabel,
+                style: TextStyle(
+                  fontWeight:
+                      isSelected ? FontWeight.bold : FontWeight.normal,
+                  color: isSelected ? direction.color : Colors.grey,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -732,6 +883,19 @@ class _ChartSnapshotCard extends StatelessWidget {
                     ],
                   ),
                 ),
+                // 替换/删除按钮
+                if (imagePath != null) ...[
+                  GestureDetector(
+                    onTap: () async {
+                      final path =
+                          await ImageManager.showPickerDialog(context);
+                      if (path != null) onImageSelected(path);
+                    },
+                    child: Icon(Icons.swap_horiz,
+                        size: 20, color: color.withOpacity(0.6)),
+                  ),
+                  const SizedBox(width: 12),
+                ],
                 if (imagePath != null)
                   const Icon(Icons.check_circle,
                       color: Colors.green, size: 20),
@@ -867,6 +1031,7 @@ class _SectionCard extends StatelessWidget {
 class _BottomNavButtons extends StatelessWidget {
   final int currentStep;
   final bool isSaving;
+  final bool isEditMode;
   final VoidCallback onNext;
   final VoidCallback onPrev;
   final VoidCallback onSave;
@@ -874,6 +1039,7 @@ class _BottomNavButtons extends StatelessWidget {
   const _BottomNavButtons({
     required this.currentStep,
     required this.isSaving,
+    this.isEditMode = false,
     required this.onNext,
     required this.onPrev,
     required this.onSave,
@@ -921,7 +1087,7 @@ class _BottomNavButtons extends StatelessWidget {
                               color: Colors.white,
                             ),
                           )
-                        : const Text('保存记录'),
+                        : Text(isEditMode ? '更新记录' : '保存记录'),
                   ),
           ),
         ],

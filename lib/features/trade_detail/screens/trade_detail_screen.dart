@@ -66,6 +66,11 @@ class _TradeDetailContent extends ConsumerWidget {
         backgroundColor: Colors.white,
         elevation: 0,
         actions: [
+          IconButton(
+            onPressed: () => context.push('/trade/${trade.id}/edit'),
+            icon: const Icon(Icons.edit_outlined, size: 20),
+            tooltip: '编辑',
+          ),
           if (isOpen)
             TextButton.icon(
               onPressed: () =>
