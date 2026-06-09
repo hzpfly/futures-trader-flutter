@@ -175,15 +175,15 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
           openPrice: openPrice,
           lots: lots,
           stopLoss: _stopLossCtrl.text.isNotEmpty
-              ? drift.Value(double.tryParse(_stopLossCtrl.text))
-              : const drift.Value.absent(),
+              ? double.tryParse(_stopLossCtrl.text)
+              : null,
           takeProfit: _takeProfitCtrl.text.isNotEmpty
-              ? drift.Value(double.tryParse(_takeProfitCtrl.text))
-              : const drift.Value.absent(),
-          signalScore: drift.Value(_signalScore),
-          notes: drift.Value(_notesCtrl.text),
-          entryReason: drift.Value(_entryReasonCtrl.text),
-          updatedAt: drift.Value(DateTime.now()),
+              ? double.tryParse(_takeProfitCtrl.text)
+              : null,
+          signalScore: _signalScore,
+          notes: _notesCtrl.text,
+          entryReason: _entryReasonCtrl.text,
+          updatedAt: DateTime.now(),
         );
         await tradesDao.updateTrade(updated);
         tradeId = _editTrade!.id;
