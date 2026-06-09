@@ -30,6 +30,14 @@ final journalsDaoProvider = Provider<JournalsDao>((ref) {
   return ref.watch(appDatabaseProvider).journalsDao;
 });
 
+// ─── 月份选择 Provider ────────────────────────────────
+/// 当前选中的月份（默认本月）
+final selectedMonthProvider =
+    StateProvider<DateTime>((ref) {
+  final now = DateTime.now();
+  return DateTime(now.year, now.month);
+});
+
 // ─── 交易列表 Providers ───────────────────────────────
 /// 按状态筛选的交易列表
 final tradeListByStatusProvider =
@@ -74,6 +82,53 @@ final journalByTradeProvider =
 });
 
 // ─── 统计 Provider ────────────────────────────────────
+/// 按月统计（传入 DateTime(year, month) 的月份）
+final monthStatsProvider =
+    FutureProvider.family<TradeStats, DateTime>((ref, month) async {
+  final dao = ref.watch(tradesDaoProvider);
+  final closeDao = ref.watch(closeRecordsDaoProvider);
+
+  final startDate = DateTime(month.year, month.month);
+  final endDate = DateTime(month.year, month.month + 1);
+
+  // 该月开仓的所有交易
+  final allTrades = await dao.getAllTrades();
+  final monthTrades = allTrades
+      .where((t) =>
+          t.openTime.isAfter(startDate.subtract(const Duration(seconds: 1))) &&
+          t.openTime.isBefore(endDate))
+      .toList();
+
+  if (monthTrades.isEmpty) return TradeStats.empty();
+
+  final closedTrades =
+      monthTrades.where((t) => t.status == 'closed').toList();
+  double totalPnl = 0;
+  int winCount = 0;
+  int lossCount = 0;
+
+  for (final t in closedTrades) {
+    final pnl = await closeDao.getTotalPnlByTrade(t.id);
+    totalPnl += pnl;
+    if (pnl > 0) winCount++;
+    if (pnl < 0) lossCount++;
+  }
+
+  final openCount = monthTrades.where((t) => t.status == 'open').length;
+  final winRate =
+      closedTrades.isEmpty ? 0.0 : winCount / closedTrades.length;
+
+  return TradeStats(
+    totalTrades: monthTrades.length,
+    openCount: openCount,
+    closedCount: closedTrades.length,
+    totalPnl: totalPnl,
+    winCount: winCount,
+    lossCount: lossCount,
+    winRate: winRate,
+  );
+});
+
 final tradeStatsProvider = FutureProvider<TradeStats>((ref) async {
   final dao = ref.watch(tradesDaoProvider);
   final closeDao = ref.watch(closeRecordsDaoProvider);

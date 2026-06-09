@@ -43,7 +43,8 @@ class _TradeListScreenState extends ConsumerState<TradeListScreen>
 
   @override
   Widget build(BuildContext context) {
-    final stats = ref.watch(tradeStatsProvider);
+    final selectedMonth = ref.watch(selectedMonthProvider);
+    final statsAsync = ref.watch(monthStatsProvider(selectedMonth));
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
@@ -76,8 +77,10 @@ class _TradeListScreenState extends ConsumerState<TradeListScreen>
       ),
       body: Column(
         children: [
-          // 统计头部
-          stats.when(
+          // 月份切换栏
+          _MonthSelector(selectedMonth: selectedMonth),
+          // 统计头部（按当前月份）
+          statsAsync.when(
             data: (s) => StatsHeader(stats: s),
             loading: () => const SizedBox(height: 80),
             error: (_, __) => const SizedBox(height: 8),
@@ -95,6 +98,7 @@ class _TradeListScreenState extends ConsumerState<TradeListScreen>
                   .map((status) => _TradeListTab(
                         status: status,
                         symbolFilter: _selectedSymbol,
+                        selectedMonth: selectedMonth,
                       ))
                   .toList(),
             ),
@@ -107,6 +111,179 @@ class _TradeListScreenState extends ConsumerState<TradeListScreen>
         label: const Text('新建交易'),
         backgroundColor: kLongColor,
         foregroundColor: Colors.white,
+      ),
+    );
+  }
+}
+
+// ─── 月份切换栏 ───────────────────────────────────────
+class _MonthSelector extends ConsumerWidget {
+  final DateTime selectedMonth;
+
+  const _MonthSelector({required this.selectedMonth});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final now = DateTime.now();
+    final isCurrentMonth =
+        selectedMonth.year == now.year && selectedMonth.month == now.month;
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // 上个月
+          IconButton(
+            icon: const Icon(Icons.chevron_left),
+            iconSize: 22,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            onPressed: () {
+              ref.read(selectedMonthProvider.notifier).state = DateTime(
+                selectedMonth.year,
+                selectedMonth.month - 1,
+              );
+            },
+          ),
+          // 月份显示 + 点击弹出选择器
+          GestureDetector(
+            onTap: () => _showMonthPicker(context, ref, selectedMonth),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0F4FF),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    DateFormat('yyyy年M月').format(selectedMonth),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1565C0),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.arrow_drop_down,
+                      size: 18, color: Color(0xFF1565C0)),
+                ],
+              ),
+            ),
+          ),
+          // 下个月（不超过本月）
+          IconButton(
+            icon: Icon(
+              Icons.chevron_right,
+              color: isCurrentMonth ? Colors.grey[300] : null,
+            ),
+            iconSize: 22,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            onPressed: isCurrentMonth
+                ? null
+                : () {
+                    ref.read(selectedMonthProvider.notifier).state = DateTime(
+                      selectedMonth.year,
+                      selectedMonth.month + 1,
+                    );
+                  },
+          ),
+          // 回到本月按钮
+          if (!isCurrentMonth) ...[
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: () {
+                ref.read(selectedMonthProvider.notifier).state =
+                    DateTime(now.year, now.month);
+              },
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: kLongColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                  border:
+                      Border.all(color: kLongColor.withOpacity(0.4)),
+                ),
+                child: Text(
+                  '本月',
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: kLongColor,
+                      fontWeight: FontWeight.w500),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _showMonthPicker(
+      BuildContext context, WidgetRef ref, DateTime current) {
+    final now = DateTime.now();
+    // 生成最近36个月的选项
+    final months = List.generate(36, (i) {
+      return DateTime(now.year, now.month - i);
+    });
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SizedBox(
+        height: 300,
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: const Text(
+                '选择月份',
+                style:
+                    TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                itemCount: months.length,
+                itemBuilder: (_, i) {
+                  final m = months[i];
+                  final isSelected =
+                      m.year == current.year && m.month == current.month;
+                  return ListTile(
+                    title: Text(
+                      DateFormat('yyyy年M月').format(m),
+                      style: TextStyle(
+                        color: isSelected
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
+                        fontWeight: isSelected
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      ),
+                    ),
+                    trailing: isSelected
+                        ? Icon(Icons.check,
+                            color:
+                                Theme.of(context).colorScheme.primary)
+                        : null,
+                    onTap: () {
+                      ref.read(selectedMonthProvider.notifier).state = m;
+                      Navigator.pop(ctx);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -171,8 +348,13 @@ class _SymbolFilter extends StatelessWidget {
 class _TradeListTab extends ConsumerWidget {
   final String status;
   final String symbolFilter;
+  final DateTime selectedMonth;
 
-  const _TradeListTab({required this.status, required this.symbolFilter});
+  const _TradeListTab({
+    required this.status,
+    required this.symbolFilter,
+    required this.selectedMonth,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -182,25 +364,131 @@ class _TradeListTab extends ConsumerWidget {
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(child: Text('加载失败：$e')),
       data: (trades) {
+        // 月份过滤（持仓中 Tab 不过滤，始终显示全部持仓）
+        List<TradeRecord> monthFiltered;
+        if (status == 'open') {
+          monthFiltered = trades;
+        } else {
+          final startDate = DateTime(selectedMonth.year, selectedMonth.month);
+          final endDate =
+              DateTime(selectedMonth.year, selectedMonth.month + 1);
+          monthFiltered = trades
+              .where((t) =>
+                  t.openTime.isAfter(
+                      startDate.subtract(const Duration(seconds: 1))) &&
+                  t.openTime.isBefore(endDate))
+              .toList();
+        }
+
         // 品种筛选
         final filtered = symbolFilter == 'all'
-            ? trades
-            : trades.where((t) => t.symbol == symbolFilter).toList();
+            ? monthFiltered
+            : monthFiltered
+                .where((t) => t.symbol == symbolFilter)
+                .toList();
 
         if (filtered.isEmpty) {
           return _EmptyState(status: status);
         }
 
+        // 按日期分组
+        final groups = _groupByDate(filtered);
+
         return RefreshIndicator(
           onRefresh: () async {},
-          child: ListView.separated(
-            padding: const EdgeInsets.all(12),
-            itemCount: filtered.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (ctx, i) => TradeListItem(trade: filtered[i]),
+          child: ListView.builder(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
+            itemCount: groups.length,
+            itemBuilder: (ctx, i) {
+              final entry = groups[i];
+              if (entry is _DateHeader) {
+                return _DateHeaderWidget(label: entry.label);
+              } else if (entry is TradeRecord) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: TradeListItem(trade: entry),
+                );
+              }
+              return const SizedBox.shrink();
+            },
           ),
         );
       },
+    );
+  }
+
+  /// 将交易列表按日期分组，插入日期标题
+  List<dynamic> _groupByDate(List<TradeRecord> trades) {
+    final result = <dynamic>[];
+    String? lastDate;
+
+    for (final trade in trades) {
+      final dateKey = DateFormat('yyyy-MM-dd').format(trade.openTime);
+      final dateLabel = _formatDateLabel(trade.openTime);
+
+      if (dateKey != lastDate) {
+        result.add(_DateHeader(label: dateLabel));
+        lastDate = dateKey;
+      }
+      result.add(trade);
+    }
+    return result;
+  }
+
+  String _formatDateLabel(DateTime dt) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final date = DateTime(dt.year, dt.month, dt.day);
+
+    final weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+    final weekday = weekdays[dt.weekday - 1];
+
+    if (date == today) {
+      return '今天  周$weekday  ${DateFormat('M月d日').format(dt)}';
+    } else if (date == yesterday) {
+      return '昨天  周$weekday  ${DateFormat('M月d日').format(dt)}';
+    } else {
+      return '${DateFormat('M月d日').format(dt)}  周$weekday';
+    }
+  }
+}
+
+class _DateHeader {
+  final String label;
+  const _DateHeader({required this.label});
+}
+
+// ─── 日期分隔标题 ─────────────────────────────────────
+class _DateHeaderWidget extends StatelessWidget {
+  final String label;
+  const _DateHeaderWidget({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 6),
+      child: Row(
+        children: [
+          Container(
+            width: 3,
+            height: 14,
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primary,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[600],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -213,9 +501,9 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final messages = {
-      'all': '还没有交易记录\n点击右下角「新建交易」开始记录',
+      'all': '本月暂无交易记录\n点击右下角「新建交易」开始记录',
       'open': '暂无持仓中的交易',
-      'closed': '暂无已平仓的交易',
+      'closed': '本月暂无已平仓的交易',
     };
     return Center(
       child: Column(
