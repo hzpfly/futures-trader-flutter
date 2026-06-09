@@ -38,6 +38,9 @@ final selectedMonthProvider =
   return DateTime(now.year, now.month);
 });
 
+/// 当前选中的日期（null 表示不按天过滤）
+final selectedDayProvider = StateProvider<DateTime?>((ref) => null);
+
 // ─── 交易列表 Providers ───────────────────────────────
 /// 按状态筛选的交易列表
 final tradeListByStatusProvider =
@@ -120,6 +123,52 @@ final monthStatsProvider =
 
   return TradeStats(
     totalTrades: monthTrades.length,
+    openCount: openCount,
+    closedCount: closedTrades.length,
+    totalPnl: totalPnl,
+    winCount: winCount,
+    lossCount: lossCount,
+    winRate: winRate,
+  );
+});
+
+/// 按天统计（传入 DateTime 日期）
+final dayStatsProvider =
+    FutureProvider.family<TradeStats, DateTime>((ref, day) async {
+  final dao = ref.watch(tradesDaoProvider);
+  final closeDao = ref.watch(closeRecordsDaoProvider);
+
+  final dayStart = DateTime(day.year, day.month, day.day);
+  final dayEnd = dayStart.add(const Duration(days: 1));
+
+  final allTrades = await dao.getAllTrades();
+  final dayTrades = allTrades
+      .where((t) =>
+          t.openTime.isAfter(dayStart.subtract(const Duration(seconds: 1))) &&
+          t.openTime.isBefore(dayEnd))
+      .toList();
+
+  if (dayTrades.isEmpty) return TradeStats.empty();
+
+  final closedTrades =
+      dayTrades.where((t) => t.status == 'closed').toList();
+  double totalPnl = 0;
+  int winCount = 0;
+  int lossCount = 0;
+
+  for (final t in closedTrades) {
+    final pnl = await closeDao.getTotalPnlByTrade(t.id);
+    totalPnl += pnl;
+    if (pnl > 0) winCount++;
+    if (pnl < 0) lossCount++;
+  }
+
+  final openCount = dayTrades.where((t) => t.status == 'open').length;
+  final winRate =
+      closedTrades.isEmpty ? 0.0 : winCount / closedTrades.length;
+
+  return TradeStats(
+    totalTrades: dayTrades.length,
     openCount: openCount,
     closedCount: closedTrades.length,
     totalPnl: totalPnl,

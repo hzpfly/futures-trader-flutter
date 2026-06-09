@@ -44,7 +44,11 @@ class _TradeListScreenState extends ConsumerState<TradeListScreen>
   @override
   Widget build(BuildContext context) {
     final selectedMonth = ref.watch(selectedMonthProvider);
-    final statsAsync = ref.watch(monthStatsProvider(selectedMonth));
+    final selectedDay = ref.watch(selectedDayProvider);
+    // 按天统计优先，否则按月统计
+    final statsAsync = selectedDay != null
+        ? ref.watch(dayStatsProvider(selectedDay))
+        : ref.watch(monthStatsProvider(selectedMonth));
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
@@ -75,11 +79,13 @@ class _TradeListScreenState extends ConsumerState<TradeListScreen>
           indicatorWeight: 2,
         ),
       ),
-      body: Column(
-        children: [
-          // 月份切换栏
-          _MonthSelector(selectedMonth: selectedMonth),
-          // 统计头部（按当前月份）
+        body: Column(
+          children: [
+            // 月份切换栏
+            _MonthSelector(selectedMonth: selectedMonth),
+            // 日期选择行（选中某天时显示）
+            _DaySelector(),
+            // 统计头部（按当前月份/日期）
           statsAsync.when(
             data: (s) => StatsHeader(stats: s),
             loading: () => const SizedBox(height: 80),
@@ -358,6 +364,7 @@ class _TradeListTab extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final selectedDay = ref.watch(selectedDayProvider);
     final tradesAsync = ref.watch(tradeListByStatusProvider(status));
 
     return tradesAsync.when(
@@ -380,10 +387,26 @@ class _TradeListTab extends ConsumerWidget {
               .toList();
         }
 
+        // 按天过滤（如果选择了日期）
+        List<TradeRecord> dayFiltered;
+        if (status == 'open') {
+          dayFiltered = monthFiltered;
+        } else if (selectedDay != null) {
+          final dayStart =
+              DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
+          final dayEnd = dayStart.add(const Duration(days: 1));
+          dayFiltered = monthFiltered.where((t) =>
+              t.openTime.isAfter(
+                      dayStart.subtract(const Duration(seconds: 1))) &&
+              t.openTime.isBefore(dayEnd)).toList();
+        } else {
+          dayFiltered = monthFiltered;
+        }
+
         // 品种筛选
         final filtered = symbolFilter == 'all'
-            ? monthFiltered
-            : monthFiltered
+            ? dayFiltered
+            : dayFiltered
                 .where((t) => t.symbol == symbolFilter)
                 .toList();
 
@@ -519,5 +542,85 @@ class _EmptyState extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ─── 日期选择器 ─────────────────────────────────────
+class _DaySelector extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final selectedDay = ref.watch(selectedDayProvider);
+
+    if (selectedDay == null) {
+      return Container(
+        color: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        alignment: Alignment.centerRight,
+        child: GestureDetector(
+          onTap: () => _pickDay(context, ref),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0F4FF),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                Icon(Icons.calendar_today, size: 12, color: Color(0xFF1565C0)),
+                SizedBox(width: 4),
+                Text(
+                  '选择日期',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF1565C0)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+    final weekday = weekdays[selectedDay.weekday - 1];
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            '${DateFormat('yyyy年M月d日').format(selectedDay)}  周$weekday',
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          GestureDetector(
+            onTap: () => ref.read(selectedDayProvider.notifier).state = null,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.grey[200],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text('清除', style: TextStyle(fontSize: 11)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _pickDay(BuildContext context, WidgetRef ref) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: ref.read(selectedDayProvider) ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+
+    if (picked != null) {
+      ref.read(selectedDayProvider.notifier).state = picked;
+      ref.read(selectedMonthProvider.notifier).state =
+          DateTime(picked.year, picked.month);
+    }
   }
 }
