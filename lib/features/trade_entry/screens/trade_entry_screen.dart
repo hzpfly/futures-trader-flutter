@@ -175,11 +175,11 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
           openPrice: openPrice,
           lots: lots,
           stopLoss: _stopLossCtrl.text.isNotEmpty
-              ? double.tryParse(_stopLossCtrl.text)
-              : null,
+              ? drift.Value(double.tryParse(_stopLossCtrl.text))
+              : const drift.Value.absent(),
           takeProfit: _takeProfitCtrl.text.isNotEmpty
-              ? double.tryParse(_takeProfitCtrl.text)
-              : null,
+              ? drift.Value(double.tryParse(_takeProfitCtrl.text))
+              : const drift.Value.absent(),
           signalScore: _signalScore,
           notes: _notesCtrl.text,
           entryReason: _entryReasonCtrl.text,
