@@ -2,7 +2,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
@@ -55,7 +54,6 @@ class _TradeDetailContent extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final symbol = kFuturesSymbols[trade.symbol];
     final isLong = trade.direction == 'long';
-    final dirColor = isLong ? kLongColor : kShortColor;
     final isOpen = trade.status == 'open';
 
     return Scaffold(

@@ -211,14 +211,14 @@ class _MonthSelector extends ConsumerWidget {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: kLongColor.withOpacity(0.1),
+                  color: kLongColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                   border:
-                      Border.all(color: kLongColor.withOpacity(0.4)),
+                      Border.all(color: kLongColor.withValues(alpha: 0.4)),
                 ),
-                child: Text(
+                child: const Text(
                   '本月',
-                  style: TextStyle(
+                  style: const TextStyle(
                       fontSize: 11,
                       color: kLongColor,
                       fontWeight: FontWeight.w500),
@@ -566,10 +566,10 @@ class _DaySelector extends ConsumerWidget {
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
-              children: const [
-                Icon(Icons.calendar_today, size: 12, color: Color(0xFF1565C0)),
-                SizedBox(width: 4),
-                Text(
+              children: [
+                const Icon(Icons.calendar_today, size: 12, color: Color(0xFF1565C0)),
+                const SizedBox(width: 4),
+                const Text(
                   '选择日期',
                   style: TextStyle(fontSize: 11, color: Color(0xFF1565C0)),
                 ),
