@@ -29,7 +29,7 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
   final _takeProfitCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
   final _entryReasonCtrl = TextEditingController();
-  String _selectedSymbol = 'AO';
+  String _selectedSymbol = 'CF';
   String _contract = '';
   TradeDirection _direction = TradeDirection.long;
   int _signalScore = 3;
