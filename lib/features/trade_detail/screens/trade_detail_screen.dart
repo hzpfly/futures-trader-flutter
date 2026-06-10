@@ -183,9 +183,9 @@ class _BasicInfoCard extends StatelessWidget {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: dirColor.withOpacity(0.1),
+                  color: dirColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: dirColor.withOpacity(0.4)),
+                  border: Border.all(color: dirColor.withValues(alpha: 0.4)),
                 ),
                 child: Text(
                   isLong ? '做多' : '做空',
@@ -208,6 +208,24 @@ class _BasicInfoCard extends StatelessWidget {
                   .label,
               valueColor:
                   trade.status == 'open' ? Colors.orange : Colors.grey,
+            ),
+          ]),
+          const SizedBox(height: 10),
+          // 合约规格和手续费
+          _InfoRow(items: [
+            _InfoCell(
+              label: '合约乘数',
+              value: symbol?.multiplierDesc ?? '--',
+              valueColor: const Color(0xFF1565C0),
+            ),
+            _InfoCell(
+              label: '合约单位',
+              value: symbol?.unit ?? '--',
+            ),
+            _InfoCell(
+              label: '手续费',
+              value: symbol?.feeDesc ?? '--',
+              valueColor: Colors.orange[700]!,
             ),
           ]),
           const SizedBox(height: 10),

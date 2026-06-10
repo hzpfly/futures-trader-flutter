@@ -29,7 +29,7 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
   final _takeProfitCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
   final _entryReasonCtrl = TextEditingController();
-  String _selectedSymbol = 'JD';
+  String _selectedSymbol = 'AO';
   String _contract = '';
   TradeDirection _direction = TradeDirection.long;
   int _signalScore = 3;
@@ -519,6 +519,7 @@ class _Step1BasicInfo extends StatelessWidget {
                   onChanged: readonly ? null : (v) => onSymbolChanged(v!),
                 ),
                 const SizedBox(height: 12),
+                const SizedBox(height: 12),
                 // 合约月份
                 TextFormField(
                   initialValue: contract,
@@ -535,6 +536,55 @@ class _Step1BasicInfo extends StatelessWidget {
                   ],
                   onChanged: onContractChanged,
                 ),
+                // 合约规格信息条
+                Builder(builder: (ctx) {
+                  final info = kFuturesSymbols[symbol];
+                  if (info == null) return const SizedBox.shrink();
+                  final exName = kExchangeNames[info.exchange] ?? info.exchange;
+                  return Container(
+                    margin: const EdgeInsets.only(top: 10),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0F4FF),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('交易所：$exName',
+                                  style: const TextStyle(
+                                      fontSize: 11, color: Colors.grey)),
+                              const SizedBox(height: 2),
+                              Text('合约规格：${info.unit}',
+                                  style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('合约乘数：${info.multiplierDesc}',
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      color: Color(0xFF1565C0),
+                                      fontWeight: FontWeight.w500)),
+                              const SizedBox(height: 2),
+                              Text('手续费：${info.feeDesc}',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.orange[700])),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
               ],
             ),
           ),
