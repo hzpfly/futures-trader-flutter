@@ -397,11 +397,85 @@ class _InlineCloseRecord extends StatelessWidget {
               // 编辑按钮
               Icon(Icons.edit_outlined,
                   size: 14, color: Colors.grey[400]),
+              const SizedBox(width: 2),
+              // 删除按钮
+              GestureDetector(
+                onTap: () => _confirmDelete(context),
+                child: Icon(Icons.delete_outline,
+                    size: 14, color: Colors.red[300]),
+              ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除平仓记录'),
+        content: Text(
+            '确定删除第${index + 1}条平仓记录吗？\n'
+            '${record.closePrice.toStringAsFixed(0)} × ${record.closeLots}手，'
+            '盈亏 ${(record.pnl - record.commission) >= 0 ? '+' : ''}${(record.pnl - record.commission).toStringAsFixed(0)}元\n\n'
+            '删除后不可恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _doDelete(context);
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _doDelete(BuildContext context) async {
+    // 需要 ref 来调用 DAO 和 invalidate 缓存
+    // 这里用 context 获取 provider container
+    final container = ProviderScope.containerOf(context);
+    try {
+      await container.read(closeRecordsDaoProvider).deleteCloseRecord(record.id);
+
+      // 检查是否需要更新交易状态
+      final totalClosed = await container
+          .read(closeRecordsDaoProvider)
+          .getClosedLotsByTrade(trade.id);
+      if (totalClosed < trade.lots && trade.status == 'closed') {
+        await container
+            .read(tradesDaoProvider)
+            .updateTradeStatus(trade.id, 'open');
+      }
+
+      // 刷新统计缓存
+      final ot = trade.openTime;
+      container.invalidate(monthStatsProvider(DateTime(ot.year, ot.month)));
+      container.invalidate(
+          dayStatsProvider(DateTime(ot.year, ot.month, ot.day)));
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('平仓记录已删除'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('删除失败：$e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   void _showEditDialog(BuildContext context) {
@@ -622,6 +696,8 @@ class _EditCloseRecordSheetState
   late final TextEditingController _commissionCtrl;
   late String _closeReason;
   bool _isSaving = false;
+  bool _isDeleting = false;
+  String? _errorText;
 
   @override
   void initState() {
@@ -710,23 +786,72 @@ class _EditCloseRecordSheetState
               ),
             ],
           ),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _isSaving ? null : _save,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue[700],
-                foregroundColor: Colors.white,
+          // 内联错误提示（不会被 BottomSheet 遮挡）
+          if (_errorText != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.red[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red[200]!),
               ),
-              child: _isSaving
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : const Text('保存修改'),
+              child: Row(
+                children: [
+                  Icon(Icons.error_outline, size: 16, color: Colors.red[700]),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _errorText!,
+                      style: TextStyle(fontSize: 13, color: Colors.red[700]),
+                    ),
+                  ),
+                ],
+              ),
             ),
+          ],
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              // 删除按钮
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: (_isSaving || _isDeleting) ? null : _confirmDelete,
+                  icon: _isDeleting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2))
+                      : const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('删除'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // 保存按钮
+              Expanded(
+                flex: 2,
+                child: ElevatedButton(
+                  onPressed: _isSaving ? null : _save,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[700],
+                    foregroundColor: Colors.white,
+                  ),
+                  child: _isSaving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Text('保存修改'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -734,12 +859,12 @@ class _EditCloseRecordSheetState
   }
 
   Future<void> _save() async {
+    setState(() => _errorText = null);
     final closePrice = double.tryParse(_closePriceCtrl.text);
     final closeLots = int.tryParse(_lotsCtrl.text);
     final commission = double.tryParse(_commissionCtrl.text) ?? 0;
     if (closePrice == null || closeLots == null || closeLots <= 0) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('请填写平仓价格和手数')));
+      setState(() => _errorText = '请填写有效的平仓价格和手数');
       return;
     }
 
@@ -749,14 +874,8 @@ class _EditCloseRecordSheetState
             .getClosedLotsByTrade(widget.trade.id)) -
         widget.closeRecord.closeLots;
     if (closeLots + otherClosedLots > widget.trade.lots) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(
-                  '平仓手数不能超过总开仓（${widget.trade.lots}手，已有$otherClosedLots手在其他平仓记录）'),
-              backgroundColor: Colors.red),
-        );
-      }
+      setState(() =>
+          _errorText = '平仓手数不能超过总开仓（${widget.trade.lots}手，已有$otherClosedLots手在其他平仓记录）');
       return;
     }
 
@@ -809,14 +928,74 @@ class _EditCloseRecordSheetState
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('保存失败：$e'), backgroundColor: Colors.red),
-        );
-      }
+      setState(() => _errorText = '保存失败：$e');
     } finally {
       if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _confirmDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除平仓记录'),
+        content: Text(
+            '确定删除该平仓记录吗？\n'
+            '${widget.closeRecord.closePrice.toStringAsFixed(0)} × ${widget.closeRecord.closeLots}手\n\n'
+            '删除后不可恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await _doDelete();
+    }
+  }
+
+  Future<void> _doDelete() async {
+    setState(() => _isDeleting = true);
+    try {
+      await ref
+          .read(closeRecordsDaoProvider)
+          .deleteCloseRecord(widget.closeRecord.id);
+
+      // 检查是否需要更新交易状态
+      final totalClosed = await ref
+          .read(closeRecordsDaoProvider)
+          .getClosedLotsByTrade(widget.trade.id);
+      if (totalClosed < widget.trade.lots &&
+          widget.trade.status == 'closed') {
+        await ref
+            .read(tradesDaoProvider)
+            .updateTradeStatus(widget.trade.id, 'open');
+      }
+
+      final ot = widget.trade.openTime;
+      ref.invalidate(monthStatsProvider(DateTime(ot.year, ot.month)));
+      ref.invalidate(
+          dayStatsProvider(DateTime(ot.year, ot.month, ot.day)));
+
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('平仓记录已删除'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _isDeleting = false;
+        _errorText = '删除失败：$e';
+      });
     }
   }
 }
