@@ -86,10 +86,10 @@ class TradeListItem extends ConsumerWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: directionColor.withOpacity(0.12),
+                        color: directionColor.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(
-                            color: directionColor.withOpacity(0.4)),
+                            color: directionColor.withValues(alpha: 0.4)),
                       ),
                       child: Text(
                         isLong ? '多' : '空',

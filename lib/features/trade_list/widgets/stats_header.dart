@@ -92,7 +92,7 @@ class _StatCard extends StatelessWidget {
                       text: suffix,
                       style: TextStyle(
                         fontSize: 11,
-                        color: valueColor.withOpacity(0.7),
+                        color: valueColor.withValues(alpha: 0.7),
                       ),
                     ),
                 ],

@@ -166,7 +166,27 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
 
       final int tradeId;
       if (_isEditMode && _editTrade != null) {
-        // ── 编辑模式：更新已有记录 ──
+        // ── 编辑模式：若已平仓，先重算平仓记录 pnl ──
+        // 先重算再更新 trade，保证失败时数据一致
+        if (_editTrade!.status == 'closed') {
+          final closeRecordsDao = ref.read(closeRecordsDaoProvider);
+          final closeRecords =
+              await closeRecordsDao.getCloseRecordsByTrade(_editTrade!.id);
+          final isLong = _direction == TradeDirection.long;
+          final multiplier = symbolInfo?.multiplier ?? 1.0;
+
+          for (final cr in closeRecords) {
+            final priceDiff = isLong
+                ? cr.closePrice - openPrice
+                : openPrice - cr.closePrice;
+            final newPnl = priceDiff * multiplier * cr.closeLots;
+            if ((newPnl - cr.pnl).abs() > 0.01) {
+              await closeRecordsDao.updateCloseRecord(cr.copyWith(pnl: newPnl));
+            }
+          }
+        }
+
+        // ── 更新交易记录 ──
         final updated = _editTrade!.copyWith(
           symbol: _selectedSymbol,
           contract: _contract,
@@ -187,26 +207,6 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
         );
         await tradesDao.updateTrade(updated);
         tradeId = _editTrade!.id;
-
-        // ── 若已平仓，重算所有平仓记录的 pnl ──
-        if (_editTrade!.status == 'closed') {
-          final closeRecordsDao = ref.read(closeRecordsDaoProvider);
-          final closeRecords =
-              await closeRecordsDao.getCloseRecordsByTrade(tradeId);
-          final isLong = _direction == TradeDirection.long;
-          final symbolInfo = kFuturesSymbols[_selectedSymbol];
-          final multiplier = symbolInfo?.multiplier ?? 1.0;
-
-          for (final cr in closeRecords) {
-            final priceDiff = isLong
-                ? cr.closePrice - openPrice
-                : openPrice - cr.closePrice;
-            final newPnl = priceDiff * multiplier * cr.closeLots;
-            if ((newPnl - cr.pnl).abs() > 0.01) {
-              await closeRecordsDao.updateCloseRecord(cr.copyWith(pnl: newPnl));
-            }
-          }
-        }
       } else {
         // ── 新建模式 ──
         tradeId = await tradesDao.insertTrade(
@@ -282,6 +282,16 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
         // 更新 _imagePaths 指向持久化路径
         _imagePaths[level] = savedPath;
       }
+
+      // ── 刷新统计数据缓存 ──
+      if (_isEditMode && _editTrade != null) {
+        final ot = _editTrade!.openTime;
+        ref.invalidate(monthStatsProvider(DateTime(ot.year, ot.month)));
+        ref.invalidate(
+            dayStatsProvider(DateTime(ot.year, ot.month, ot.day)));
+      }
+      ref.invalidate(monthStatsProvider(
+          DateTime(DateTime.now().year, DateTime.now().month)));
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
