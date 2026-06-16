@@ -187,6 +187,26 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
         );
         await tradesDao.updateTrade(updated);
         tradeId = _editTrade!.id;
+
+        // ── 若已平仓，重算所有平仓记录的 pnl ──
+        if (_editTrade!.status == 'closed') {
+          final closeRecordsDao = ref.read(closeRecordsDaoProvider);
+          final closeRecords =
+              await closeRecordsDao.getCloseRecordsByTrade(tradeId);
+          final isLong = _direction == TradeDirection.long;
+          final symbolInfo = kFuturesSymbols[_selectedSymbol];
+          final multiplier = symbolInfo?.multiplier ?? 1.0;
+
+          for (final cr in closeRecords) {
+            final priceDiff = isLong
+                ? cr.closePrice - openPrice
+                : openPrice - cr.closePrice;
+            final newPnl = priceDiff * multiplier * cr.closeLots;
+            if ((newPnl - cr.pnl).abs() > 0.01) {
+              await closeRecordsDao.updateCloseRecord(cr.copyWith(pnl: newPnl));
+            }
+          }
+        }
       } else {
         // ── 新建模式 ──
         tradeId = await tradesDao.insertTrade(
@@ -322,7 +342,7 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
                       size: 16, color: Colors.orange[700]),
                   const SizedBox(width: 8),
                   const Text(
-                    '此交易已平仓，修改价格/手数将影响盈亏统计',
+                    '此交易已平仓，修改开仓价/手数/方向后将自动重算盈亏',
                     style: TextStyle(fontSize: 12, color: Colors.deepOrange),
                   ),
                 ],
@@ -336,7 +356,7 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
               controller: _pageController,
               physics: const NeverScrollableScrollPhysics(),
               children: [
-                _Step1BasicInfo(
+                  _Step1BasicInfo(
                   symbol: _selectedSymbol,
                   contract: _contract,
                   direction: _direction,
@@ -347,7 +367,7 @@ class _TradeEntryScreenState extends ConsumerState<TradeEntryScreen> {
                   takeProfitCtrl: _takeProfitCtrl,
                   notesCtrl: _notesCtrl,
                   entryReasonCtrl: _entryReasonCtrl,
-                  readonly: isClosed,
+                  readonly: false,
                   onSymbolChanged: (v) =>
                       setState(() => _selectedSymbol = v),
                   onContractChanged: (v) =>
@@ -753,7 +773,7 @@ class _DirectionButton extends StatelessWidget {
         height: 48,
         decoration: BoxDecoration(
           color: isSelected
-              ? direction.color.withOpacity(0.15)
+              ? direction.color.withValues(alpha: 0.15)
               : Colors.grey[100],
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
@@ -878,7 +898,7 @@ class _ChartSnapshotCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: imagePath != null ? color.withOpacity(0.4) : Colors.grey[200]!,
+          color: imagePath != null ? color.withValues(alpha: 0.4) : Colors.grey[200]!,
         ),
       ),
       child: Column(
@@ -889,7 +909,7 @@ class _ChartSnapshotCard extends StatelessWidget {
             padding:
                 const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.08),
+              color: color.withValues(alpha: 0.08),
               borderRadius:
                   const BorderRadius.vertical(top: Radius.circular(11)),
             ),
@@ -942,7 +962,7 @@ class _ChartSnapshotCard extends StatelessWidget {
                       if (path != null) onImageSelected(path);
                     },
                     child: Icon(Icons.swap_horiz,
-                        size: 20, color: color.withOpacity(0.6)),
+                        size: 20, color: color.withValues(alpha: 0.6)),
                   ),
                   const SizedBox(width: 12),
                 ],
@@ -978,13 +998,13 @@ class _ChartSnapshotCard extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(Icons.add_photo_alternate_outlined,
-                              size: 36, color: color.withOpacity(0.5)),
+                              size: 36, color: color.withValues(alpha: 0.5)),
                           const SizedBox(height: 6),
                           Text(
                             '点击上传K线截图',
                             style: TextStyle(
                                 fontSize: 13,
-                                color: color.withOpacity(0.6)),
+                                color: color.withValues(alpha: 0.6)),
                           ),
                         ],
                       ),
