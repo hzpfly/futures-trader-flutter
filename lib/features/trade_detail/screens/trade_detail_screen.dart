@@ -56,6 +56,7 @@ class _TradeDetailContent extends ConsumerWidget {
     final symbol = kFuturesSymbols[trade.symbol];
     final isLong = trade.direction == 'long';
     final isOpen = trade.status == 'open';
+    final closeRecords = closeRecordsAsync.valueOrNull ?? [];
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
@@ -86,17 +87,11 @@ class _TradeDetailContent extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          // 基本信息卡片
-          _BasicInfoCard(trade: trade, symbol: symbol),
+          _BasicInfoCard(
+              trade: trade, symbol: symbol, closeRecords: closeRecords),
           const SizedBox(height: 12),
-          // K线三联截图
           _ChartGallerySection(snapshotsAsync: snapshotsAsync),
           const SizedBox(height: 12),
-          // 平仓记录
-          _CloseRecordsSection(
-              closeRecordsAsync: closeRecordsAsync, trade: trade),
-          const SizedBox(height: 12),
-          // 复盘日志
           _JournalSection(tradeId: trade.id),
           const SizedBox(height: 32),
         ],
@@ -134,17 +129,26 @@ class _TradeDetailContent extends ConsumerWidget {
   }
 }
 
-// ─── 基本信息卡片 ──────────────────────────────────────
+// ─── 基本信息卡片（含平仓记录内联显示）──────────────────
 class _BasicInfoCard extends StatelessWidget {
   final TradeRecord trade;
   final FuturesSymbol? symbol;
+  final List<CloseRecord> closeRecords;
 
-  const _BasicInfoCard({required this.trade, required this.symbol});
+  const _BasicInfoCard({
+    required this.trade,
+    required this.symbol,
+    required this.closeRecords,
+  });
 
   @override
   Widget build(BuildContext context) {
     final isLong = trade.direction == 'long';
     final dirColor = isLong ? kLongColor : kShortColor;
+    final closedLots = closeRecords.fold(0, (s, r) => s + r.closeLots);
+    final totalPnl =
+        closeRecords.fold(0.0, (s, r) => s + r.pnl - r.commission);
+    final hasCloseRecords = closeRecords.isNotEmpty;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -155,6 +159,7 @@ class _BasicInfoCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── 标题行：品种 + 方向 ──
           Row(
             children: [
               Container(
@@ -198,20 +203,67 @@ class _BasicInfoCard extends StatelessWidget {
             ],
           ),
           const Divider(height: 20),
+
+          // ── 第一行：开仓价 / 手数 / 状态 ──
           _InfoRow(items: [
-            _InfoCell(label: '开仓价', value: trade.openPrice.toStringAsFixed(2)),
+            _InfoCell(
+                label: '开仓价', value: trade.openPrice.toStringAsFixed(2)),
             _InfoCell(label: '手数', value: '${trade.lots}手'),
             _InfoCell(
               label: '状态',
-              value: TradeStatus.values
-                  .firstWhere((s) => s.name == trade.status)
-                  .label,
-              valueColor:
-                  trade.status == 'open' ? Colors.orange : Colors.grey,
+              value: hasCloseRecords
+                  ? '已平 $closedLots/${trade.lots}手'
+                  : TradeStatus.values
+                      .firstWhere((s) => s.name == trade.status)
+                      .label,
+              valueColor: hasCloseRecords
+                  ? (closedLots >= trade.lots ? Colors.grey : Colors.orange)
+                  : (trade.status == 'open' ? Colors.orange : Colors.grey),
             ),
           ]),
+
+          // ── 平仓记录内联显示 ──
+          if (hasCloseRecords) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.only(top: 8),
+              decoration: BoxDecoration(
+                border: Border(
+                    top: BorderSide(color: Colors.grey[200]!, width: 0.5)),
+              ),
+              child: Column(
+                children: [
+                  ...closeRecords.asMap().entries.map((e) =>
+                      _InlineCloseRecord(
+                          index: e.key,
+                          record: e.value,
+                          trade: trade,
+                          isLast: e.key == closeRecords.length - 1)),
+                  // 总盈亏
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Text('总盈亏',
+                          style:
+                              TextStyle(fontSize: 12, color: Colors.grey)),
+                      const Spacer(),
+                      Text(
+                        '${totalPnl >= 0 ? '+' : ''}${totalPnl.toStringAsFixed(0)}元',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          color: totalPnl >= 0 ? kProfitColor : kLossColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+
           const SizedBox(height: 10),
-          // 合约规格和手续费
+          // ── 合约规格 ──
           _InfoRow(items: [
             _InfoCell(
               label: '合约乘数',
@@ -270,6 +322,97 @@ class _BasicInfoCard extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+// ─── 平仓记录行（可编辑）─────────────────────────────────
+class _InlineCloseRecord extends StatelessWidget {
+  final int index;
+  final CloseRecord record;
+  final TradeRecord trade;
+  final bool isLast;
+
+  const _InlineCloseRecord({
+    required this.index,
+    required this.record,
+    required this.trade,
+    required this.isLast,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pnl = record.pnl - record.commission;
+    final pnlColor = pnl >= 0 ? kProfitColor : kLossColor;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: isLast ? 6 : 4),
+      child: InkWell(
+        onTap: () => _showEditDialog(context),
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Row(
+            children: [
+              // 序号
+              Container(
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Center(
+                  child: Text('${index + 1}',
+                      style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey,
+                          fontWeight: FontWeight.w600)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // 平仓信息
+              Expanded(
+                child: Text(
+                  '${record.closePrice.toStringAsFixed(0)} × ${record.closeLots}手',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                ),
+              ),
+              // 时间
+              Text(
+                DateFormat('MM-dd HH:mm').format(record.closeTime),
+                style: const TextStyle(fontSize: 11, color: Colors.grey),
+              ),
+              const SizedBox(width: 8),
+              // 盈亏
+              Text(
+                '${pnl >= 0 ? '+' : ''}${pnl.toStringAsFixed(0)}',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: pnlColor,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(width: 4),
+              // 编辑按钮
+              Icon(Icons.edit_outlined,
+                  size: 14, color: Colors.grey[400]),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showEditDialog(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) =>
+          _EditCloseRecordSheet(trade: trade, closeRecord: record),
     );
   }
 }
@@ -459,98 +602,222 @@ class _FullscreenGallery extends StatelessWidget {
   }
 }
 
-// ─── 平仓记录区 ───────────────────────────────────────
-class _CloseRecordsSection extends StatelessWidget {
-  final AsyncValue<List<CloseRecord>> closeRecordsAsync;
+// ── 平仓记录编辑弹窗 ──────────────────────────────────
+class _EditCloseRecordSheet extends ConsumerStatefulWidget {
   final TradeRecord trade;
+  final CloseRecord closeRecord;
 
-  const _CloseRecordsSection(
-      {required this.closeRecordsAsync, required this.trade});
+  const _EditCloseRecordSheet(
+      {required this.trade, required this.closeRecord});
 
   @override
-  Widget build(BuildContext context) {
-    return closeRecordsAsync.when(
-      loading: () => const SizedBox.shrink(),
-      error: (_, __) => const SizedBox.shrink(),
-      data: (records) {
-        if (records.isEmpty) return const SizedBox.shrink();
-        final totalPnl = records.fold(
-            0.0, (sum, r) => sum + r.pnl - r.commission);
-        return Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Text('平仓记录',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 14)),
-                  const Spacer(),
-                  Text(
-                    '总盈亏：${totalPnl >= 0 ? '+' : ''}${totalPnl.toStringAsFixed(0)}元',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: totalPnl >= 0 ? kProfitColor : kLossColor,
-                    ),
-                  ),
-                ],
-              ),
-              const Divider(height: 16),
-              ...records.map((r) => _CloseRecordItem(record: r)),
-            ],
-          ),
-        );
-      },
-    );
-  }
+  ConsumerState<_EditCloseRecordSheet> createState() =>
+      _EditCloseRecordSheetState();
 }
 
-class _CloseRecordItem extends StatelessWidget {
-  final CloseRecord record;
-  const _CloseRecordItem({required this.record});
+class _EditCloseRecordSheetState
+    extends ConsumerState<_EditCloseRecordSheet> {
+  late final TextEditingController _closePriceCtrl;
+  late final TextEditingController _lotsCtrl;
+  late final TextEditingController _commissionCtrl;
+  late String _closeReason;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _closePriceCtrl = TextEditingController(
+        text: widget.closeRecord.closePrice.toString());
+    _lotsCtrl = TextEditingController(
+        text: widget.closeRecord.closeLots.toString());
+    _commissionCtrl = TextEditingController(
+        text: widget.closeRecord.commission.toString());
+    _closeReason = widget.closeRecord.closeReason;
+  }
+
+  @override
+  void dispose() {
+    _closePriceCtrl.dispose();
+    _lotsCtrl.dispose();
+    _commissionCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final pnl = record.pnl - record.commission;
-    final pnlColor = pnl >= 0 ? kProfitColor : kLossColor;
-
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
+      padding: EdgeInsets.fromLTRB(
+          16, 16, 16, 16 + MediaQuery.of(context).viewInsets.bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '平仓 ${record.closeLots}手 @ ${record.closePrice.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w500),
+          const Text('编辑平仓记录',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: _closePriceCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '平仓价格 *',
+                    hintText: '0.00',
+                  ),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  autofocus: true,
                 ),
-                Text(
-                  DateFormat('MM-dd HH:mm').format(record.closeTime) +
-                      '  ${CloseReason.values.firstWhere((c) => c.name == record.closeReason, orElse: () => CloseReason.manual).label}',
-                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  controller: _lotsCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '手数',
+                    suffixText: '手',
+                  ),
+                  keyboardType: TextInputType.number,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-          Text(
-            '${pnl >= 0 ? '+' : ''}${pnl.toStringAsFixed(0)}元',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: pnlColor,
-              fontSize: 15,
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: _commissionCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '手续费(元)',
+                    hintText: '0',
+                  ),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  value: _closeReason,
+                  decoration: const InputDecoration(labelText: '平仓原因'),
+                  items: CloseReason.values
+                      .map((r) => DropdownMenuItem(
+                          value: r.name, child: Text(r.label)))
+                      .toList(),
+                  onChanged: (v) => setState(() => _closeReason = v!),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _isSaving ? null : _save,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue[700],
+                foregroundColor: Colors.white,
+              ),
+              child: _isSaving
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('保存修改'),
             ),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _save() async {
+    final closePrice = double.tryParse(_closePriceCtrl.text);
+    final closeLots = int.tryParse(_lotsCtrl.text);
+    final commission = double.tryParse(_commissionCtrl.text) ?? 0;
+    if (closePrice == null || closeLots == null || closeLots <= 0) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请填写平仓价格和手数')));
+      return;
+    }
+
+    // 校验：手数不超过开仓总手数（扣除其他平仓记录）
+    final otherClosedLots = (await ref
+            .read(closeRecordsDaoProvider)
+            .getClosedLotsByTrade(widget.trade.id)) -
+        widget.closeRecord.closeLots;
+    if (closeLots + otherClosedLots > widget.trade.lots) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(
+                  '平仓手数不能超过总开仓（${widget.trade.lots}手，已有$otherClosedLots手在其他平仓记录）'),
+              backgroundColor: Colors.red),
+        );
+      }
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      final isLong = widget.trade.direction == 'long';
+      final priceDiff = isLong
+          ? closePrice - widget.trade.openPrice
+          : widget.trade.openPrice - closePrice;
+      final symbol = kFuturesSymbols[widget.trade.symbol];
+      final multiplier = symbol?.multiplier ?? 1.0;
+      final newPnl = priceDiff * multiplier * closeLots;
+
+      await ref.read(closeRecordsDaoProvider).updateCloseRecord(
+            widget.closeRecord.copyWith(
+                pnl: newPnl,
+                closePrice: closePrice,
+                closeLots: closeLots,
+                commission: commission,
+                closeReason: _closeReason),
+          );
+
+      // 检查是否需要更新交易状态
+      final totalClosed = await ref
+          .read(closeRecordsDaoProvider)
+          .getClosedLotsByTrade(widget.trade.id);
+      if (totalClosed >= widget.trade.lots &&
+          widget.trade.status == 'open') {
+        await ref
+            .read(tradesDaoProvider)
+            .updateTradeStatus(widget.trade.id, 'closed');
+      } else if (totalClosed < widget.trade.lots &&
+          widget.trade.status == 'closed') {
+        await ref
+            .read(tradesDaoProvider)
+            .updateTradeStatus(widget.trade.id, 'open');
+      }
+
+      final ot = widget.trade.openTime;
+      ref.invalidate(monthStatsProvider(DateTime(ot.year, ot.month)));
+      ref.invalidate(
+          dayStatsProvider(DateTime(ot.year, ot.month, ot.day)));
+
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('平仓记录已更新'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('保存失败：$e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 }
 
